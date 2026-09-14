@@ -23,7 +23,7 @@ func readLog(t *testing.T, path string) string {
 // 而只收 error 的 error.log 还没被创建。
 func TestGivenInfoEntryWhenLoggedThenItLandsInAppLogOnly(t *testing.T) {
 	dir := t.TempDir()
-	l, err := New(io.Discard, dir, "agentred", "info")
+	l, _, err := New(io.Discard, dir, "agentred", "info")
 	require.NoError(t, err)
 
 	l.Info("daemon.Run: started")
@@ -36,7 +36,7 @@ func TestGivenInfoEntryWhenLoggedThenItLandsInAppLogOnly(t *testing.T) {
 // Given 同一个 logger，When 记一条 error，Then 应用日志与 error.log 都收到它。
 func TestGivenErrorEntryWhenLoggedThenItLandsInBothFiles(t *testing.T) {
 	dir := t.TempDir()
-	l, err := New(io.Discard, dir, "agentred", "info")
+	l, _, err := New(io.Discard, dir, "agentred", "info")
 	require.NoError(t, err)
 
 	l.Error("daemon.Run: listen failed")
@@ -48,14 +48,14 @@ func TestGivenErrorEntryWhenLoggedThenItLandsInBothFiles(t *testing.T) {
 // Given level=info，When 记一条 debug，Then 文件里没有它；level=debug 时才有。
 func TestGivenLevelWhenLoggingDebugThenFileHonorsThreshold(t *testing.T) {
 	quiet := t.TempDir()
-	l, err := New(io.Discard, quiet, "agentred", "info")
+	l, _, err := New(io.Discard, quiet, "agentred", "info")
 	require.NoError(t, err)
 	l.Debug("daemon.Run: frame")
 	l.Info("daemon.Run: started")
 	assert.NotContains(t, readLog(t, filepath.Join(quiet, "agentred.log")), "daemon.Run: frame")
 
 	verbose := t.TempDir()
-	l, err = New(io.Discard, verbose, "agentred", "debug")
+	l, _, err = New(io.Discard, verbose, "agentred", "debug")
 	require.NoError(t, err)
 	l.Debug("daemon.Run: frame")
 	assert.Contains(t, readLog(t, filepath.Join(verbose, "agentred.log")), "daemon.Run: frame")
@@ -65,7 +65,7 @@ func TestGivenLevelWhenLoggingDebugThenFileHonorsThreshold(t *testing.T) {
 func TestGivenConsoleWriterWhenLoggedThenConsoleReceivesEntry(t *testing.T) {
 	dir := t.TempDir()
 	console := &syncBuffer{}
-	l, err := New(console, dir, "agentred", "info")
+	l, _, err := New(console, dir, "agentred", "info")
 	require.NoError(t, err)
 
 	l.Info("daemon.Run: started")
@@ -117,4 +117,31 @@ func TestRotatingFileCoreUsesThirtyMegabyteFiles(t *testing.T) {
 	} else if len(backups) != 1 {
 		t.Fatalf("rotated backups = %v, want exactly one after crossing 30 MB", backups)
 	}
+}
+
+// Given 一份写过日志的 logger，When 调用方关掉它、把日志文件删掉之后又记了一条，
+// Then 文件不会被重新建出来——关闭的语义是「这两个文件已经交还给系统」。
+//
+// 没有这道语义时，收尾之后任何一条迟到的记录都会让 lumberjack 把文件重新打开：
+// 在 Windows 上那个句柄会一直占着 <dataDir>，让整个数据目录删不掉（CI 上 13 个
+// cmd/agentred 测试就是死在 t.TempDir 的清理上，"The process cannot access the
+// file because it is being used by another process"）。
+func TestGivenClosedLoggerWhenItLogsAgainThenTheFilesStayGone(t *testing.T) {
+	dir := t.TempDir()
+	l, files, err := New(io.Discard, dir, "agentred", "info")
+	require.NoError(t, err)
+	l.Error("daemon.Run: listen failed")
+	appLog := filepath.Join(dir, "agentred.log")
+	errLog := filepath.Join(dir, ErrorLogName)
+	require.FileExists(t, appLog)
+	require.FileExists(t, errLog)
+
+	require.NoError(t, files.Close())
+	require.NoError(t, os.Remove(appLog))
+	require.NoError(t, os.Remove(errLog))
+
+	l.Error("daemon.Run: a goroutine that outlived shutdown")
+
+	assert.NoFileExists(t, appLog)
+	assert.NoFileExists(t, errLog)
 }

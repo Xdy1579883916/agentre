@@ -4,7 +4,6 @@ package agentredipc
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -16,8 +15,8 @@ func Endpoint(dataDir string) string {
 }
 
 // Listen creates the current-user-only Unix-domain socket used by agentred.
-// The returned listener owns the socket file: closing it removes the socket,
-// but only while the path still names the file this call created.
+// Binding replaces whatever stale socket sits on the path; closing the listener
+// leaves the file behind on purpose (see the comment at SetUnlinkOnClose).
 func Listen(dataDir string) (net.Listener, error) {
 	path := Endpoint(dataDir)
 	_ = os.Remove(path)
@@ -34,39 +33,23 @@ func Listen(dataDir string) (net.Listener, error) {
 		_ = listener.Close()
 		return nil, err
 	}
-	// 收尾自己做,不用 net 包那个无条件的 unlink-on-close。同一个数据目录先后起两个
-	// daemon(安装器原地升级、崩溃重拉)时,先起的那个收尾时路径上已经是后起的那个
-	// socket,无条件 unlink 会把活着的那个删掉 —— 此后本机 IPC 全部失联,而两个
-	// daemon 都毫无察觉。net 包在 UnixListener.close 里自己写明了这个竞争。
+	// 收尾一律不删这个文件 —— net 包那个无条件的 unlink-on-close 要关掉,我们自己
+	// 也不补一个「先 stat 看看还是不是我的、再删」的版本。
+	//
+	// 同一个数据目录先后起两个 daemon(安装器原地升级、崩溃重拉)时,先起的那个收尾
+	// 时路径上可能已经是后起的那个 socket,删下去就把活着的那个删掉了 —— 此后本机
+	// IPC 全部失联,而两个 daemon 都毫无察觉(net 包在 UnixListener.close 里自己写明
+	// 了这个竞争)。而 stat 与 remove 是两个系统调用,中间就是窗口:两台 daemon 的
+	// 收尾与启动一交错,stat 看到的还是自己那一个,删下去的已经是后继者刚 bind 上的
+	// 那一个。回归锚在 transport_unix_test.go 的
+	// TestGivenAStaleListenerClosingWhileTheNextOneStarts...(修复前几轮内必现)。
+	//
+	// 路径上的陈旧文件由下一次 Listen 上面那行 os.Remove 清掉:那是唯一该删它的
+	// 时刻 —— 删的正是自己即将取代的那一个,而且紧接着就 bind。代价是干净退出之后
+	// socket 文件留在磁盘上,客户端拨它拿到的是 connection refused 而不是
+	// no such file;两者都是「没在跑」,没有人靠这个文件在不在判定存活。
 	unixListener.SetUnlinkOnClose(false)
-	created, err := os.Stat(path)
-	if err != nil {
-		_ = listener.Close()
-		_ = os.Remove(path)
-		return nil, err
-	}
-	return &ownedListener{UnixListener: unixListener, path: path, created: created}, nil
-}
-
-// ownedListener 记着自己造出来的那个 socket 文件:收尾只删自己的那一个,别人的
-// socket 不归它收。
-type ownedListener struct {
-	*net.UnixListener
-	path    string
-	created os.FileInfo
-}
-
-// Close 关掉监听,并只在路径仍指向自己造的那个 socket 时把它删掉。
-func (l *ownedListener) Close() error {
-	err := l.UnixListener.Close()
-	current, statErr := os.Stat(l.path)
-	if statErr != nil || !os.SameFile(l.created, current) {
-		return err
-	}
-	if removeErr := os.Remove(l.path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-		return errors.Join(err, removeErr)
-	}
-	return err
+	return unixListener, nil
 }
 
 // DialContext returns an HTTP transport dialer for the local Unix socket.

@@ -21,7 +21,9 @@ esac
 
 version=v9.8.7
 commit=abcdef1234567890
-identity="agentred $version (abcdef1)"
+# 注入二进制的版本号是剥掉 tag 前缀的那一份(Makefile 的 APP_VERSION),
+# 所以 --version 打印的是 9.8.7 而不是 v9.8.7;$version 继续服务产物名。
+identity="agentred ${version#v} (abcdef1)"
 asset="agentred-$version-$goos-$goarch.tar.gz"
 tmp=$(mktemp -d)
 server_pid=

@@ -17,7 +17,6 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "prepare": "tsc -p tsconfig.build.json",
     "proto:generate": "cd ../../../pkg/wire && buf generate",
     "proto:check": "cd ../../../pkg/wire && buf lint && buf breaking --against proto/baseline.binpb && buf generate && git diff --exit-code -- . ../../frontend/packages/agentre-wire/src/gen",
     "test": "vitest run"

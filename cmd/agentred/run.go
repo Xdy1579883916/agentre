@@ -84,9 +84,13 @@ func newRunCmdWithDeps(deps runDeps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := initLogging(cmd.OutOrStdout(), dir, level); err != nil {
+			logFiles, err := initLogging(cmd.OutOrStdout(), dir, level)
+			if err != nil {
 				return err
 			}
+			// run 返回就是这个 daemon 的收尾:把两个日志文件交还给系统,而不是
+			// 让它们跟着进程苟到退出 —— Windows 上没关的句柄会占着 <dataDir>。
+			defer func() { _ = logFiles.Close() }()
 			st, err := state.Load(dir)
 			if err != nil {
 				return err
@@ -162,11 +166,12 @@ func newRunCmdWithDeps(deps runDeps) *cobra.Command {
 }
 
 // initLogging 把全局 cago logger 换成写 <dataDir>/logs/ 的实例。在此之前 agentred
-// 全程用 zap 的 no-op logger,所有 logger.Ctx(...) 调用都无声丢弃。
-func initLogging(console io.Writer, dataDir, level string) error {
-	l, err := logfile.New(console, filepath.Join(dataDir, logsDirName), agentredLogName, level)
+// 全程用 zap 的 no-op logger,所有 logger.Ctx(...) 调用都无声丢弃。返回的 Closer
+// 持有两个落盘文件,由调用方在收尾时关掉。
+func initLogging(console io.Writer, dataDir, level string) (io.Closer, error) {
+	l, files, err := logfile.New(console, filepath.Join(dataDir, logsDirName), agentredLogName, level)
 	if err != nil {
-		return fmt.Errorf("init agentred logger: %w", err)
+		return nil, fmt.Errorf("init agentred logger: %w", err)
 	}
 	logger.SetLogger(l)
 	// 协议引擎住在共享 module 里、不依赖 cago,它的诊断出口要由宿主装配一次。
@@ -175,7 +180,7 @@ func initLogging(console io.Writer, dataDir, level string) error {
 	// 它们默认只写 stderr —— 而 launchd 不接管 stderr,那正是最需要回看的现场。
 	// 重定向后它们与 zap 记录落进同一个文件;进程活到退出,不需要还原。
 	zap.RedirectStdLog(l)
-	return nil
+	return files, nil
 }
 
 // resolveLogLevel 按 flag > 环境变量 > 默认解析级别。级别不落盘到 state:它是排查

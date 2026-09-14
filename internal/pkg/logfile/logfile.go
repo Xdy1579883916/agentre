@@ -4,8 +4,11 @@
 package logfile
 
 import (
+	"errors"
 	"io"
+	"io/fs"
 	"path/filepath"
+	"sync"
 
 	"github.com/cago-frame/cago/pkg/logger"
 	"go.uber.org/zap"
@@ -28,7 +31,10 @@ const ErrorLogName = "error.log"
 // New 构造写三处的 logger:console(传 nil 表示不写控制台)、<logsDir>/<name>.log
 // (按 level 过滤)、<logsDir>/error.log(只收 error 及以上)。目录与文件都由
 // lumberjack 在首次写入时创建,调用方不必预先 MkdirAll。
-func New(console io.Writer, logsDir, name, level string) (*zap.Logger, error) {
+//
+// 第二个返回值持有那两个落盘文件:调用方收尾(进程退出、或者换一份 logger)时
+// Close 一次,把它们交还给系统。
+func New(console io.Writer, logsDir, name, level string) (*zap.Logger, io.Closer, error) {
 	lvl := logger.ToLevel(level)
 	cores := make([]zapcore.Core, 0, 3)
 	if console != nil {
@@ -40,22 +46,71 @@ func New(console io.Writer, logsDir, name, level string) (*zap.Logger, error) {
 			lvl,
 		))
 	}
-	cores = append(cores,
-		NewCore(lvl, filepath.Join(logsDir, name+".log")),
-		NewCore(zapcore.ErrorLevel, filepath.Join(logsDir, ErrorLogName)),
-	)
-	return logger.New(logger.AppendCore(cores...))
+	appCore, appFile := newFileCore(lvl, filepath.Join(logsDir, name+".log"))
+	errCore, errFile := newFileCore(zapcore.ErrorLevel, filepath.Join(logsDir, ErrorLogName))
+	cores = append(cores, appCore, errCore)
+	l, err := logger.New(logger.AppendCore(cores...))
+	if err != nil {
+		return nil, nil, errors.Join(err, appFile.Close(), errFile.Close())
+	}
+	return l, files{appFile, errFile}, nil
 }
 
-// NewCore 构造单个轮转文件 core,供需要自己拼 core 列表的调用方使用。
+// NewCore 构造单个轮转文件 core,供需要自己拼 core 列表的调用方使用。这样拿到的
+// 文件跟着进程活到退出;需要在中途交还文件的调用方走 New。
 func NewCore(level zapcore.Level, filename string) zapcore.Core {
+	core, _ := newFileCore(level, filename)
+	return core
+}
+
+func newFileCore(level zapcore.Level, filename string) (zapcore.Core, io.Closer) {
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	return zapcore.NewCore(
-		zapcore.NewJSONEncoder(encoderConfig),
-		zapcore.AddSync(rotator(filename)),
-		level,
-	)
+	sink := &closableSyncer{file: rotator(filename)}
+	return zapcore.NewCore(zapcore.NewJSONEncoder(encoderConfig), sink, level), sink
+}
+
+// files 把一份 logger 的落盘文件收成一个 Closer,让调用方只收尾一次。
+type files []io.Closer
+
+func (f files) Close() error {
+	errs := make([]error, 0, len(f))
+	for _, c := range f {
+		errs = append(errs, c.Close())
+	}
+	return errors.Join(errs...)
+}
+
+// closableSyncer 是落盘 core 的写出口:在 lumberjack 之上加一道关闭状态。关闭之后
+// 的写入直接报错,而不是让 lumberjack 把文件重新建出来 —— 关日志只发生在收尾,
+// 而收尾之后复活的那一份文件没人再读,在 Windows 上还会拿句柄占着数据目录,让
+// <dataDir> 整个删不掉。
+type closableSyncer struct {
+	mu     sync.Mutex
+	closed bool
+	file   *lumberjack.Logger
+}
+
+func (s *closableSyncer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, fs.ErrClosed
+	}
+	return s.file.Write(p)
+}
+
+// Sync 是空操作:lumberjack 每次 Write 直接落到文件,自己不缓冲。
+func (s *closableSyncer) Sync() error { return nil }
+
+func (s *closableSyncer) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	return s.file.Close()
 }
 
 func rotator(filename string) *lumberjack.Logger {

@@ -34,12 +34,21 @@ const src = locateSource();
 const packageRoot = locatePackage();
 
 describe("agentre-wire public boundary", () => {
+  // dist 那半条(65e8db67)钉错了对象,连同 prepare 的代价一起记在
+  // agentre-ui/src/boundary.test.ts 的同名守卫里:本包发的是 src,消费方编译源码,
+  // 没有任何解析路径会走到 dist;而 prepare 会让 pnpm 在消费方那边 fork npm。
   it("is independently buildable from a Git subdirectory", () => {
     const manifest = JSON.parse(
       readFileSync(`${packageRoot}/package.json`, "utf8"),
-    ) as { devDependencies?: Record<string, string> };
+    ) as {
+      devDependencies?: Record<string, string>;
+      scripts?: Record<string, string | undefined>;
+      exports: Record<string, { default: string }>;
+    };
     expect(manifest.devDependencies?.["@bufbuild/protobuf"]).toBe("2.14.0");
-    expect(existsSync(`${packageRoot}/dist/index.js`)).toBe(true);
+    expect(manifest.exports["."].default).toBe("./src/index.ts");
+    expect(existsSync(`${packageRoot}/src/index.ts`)).toBe(true);
+    expect(manifest.scripts?.prepare).toBeUndefined();
   });
 
   it("publishes only the typed Protobuf transport boundary", () => {

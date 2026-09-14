@@ -59,13 +59,14 @@ describe("发布产物带得上自己的资源", () => {
     expect(assetFiles(srcDir).sort()).toEqual(assetsUnder(srcDir));
   });
 
-  it("build 与 prepare 都接上了拷贝脚本（只写脚本不接线等于没修）", () => {
+  it("build 接上了拷贝脚本（只写脚本不接线等于没修）", () => {
+    // 本包不再有 prepare：带 prepare 的 git 依赖会把消费方的 npm 拖上安装路径，
+    // 理由与守卫在 src/boundary.test.ts。build 是现在唯一跑拷贝的入口。
     const pkg = JSON.parse(
       readFileSync(path.join(packageRoot, "package.json"), "utf8"),
     ) as { scripts: Record<string, string> };
 
     expect(pkg.scripts.build).toContain("copy-assets");
-    expect(pkg.scripts.prepare).toContain("copy-assets");
   });
 
   it("拷贝真的把文件写到了输出目录（含嵌套目录）", async () => {

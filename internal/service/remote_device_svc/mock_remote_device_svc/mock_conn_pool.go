@@ -167,6 +167,47 @@ func (mr *MockLeaseMockRecorder) SelfUpdate(arg0, arg1 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SelfUpdate", reflect.TypeOf((*MockLease)(nil).SelfUpdate), arg0, arg1)
 }
 
+// MockaccountDirectDeliverer is a mock of accountDirectDeliverer interface.
+type MockaccountDirectDeliverer struct {
+	ctrl     *gomock.Controller
+	recorder *MockaccountDirectDelivererMockRecorder
+	isgomock struct{}
+}
+
+// MockaccountDirectDelivererMockRecorder is the mock recorder for MockaccountDirectDeliverer.
+type MockaccountDirectDelivererMockRecorder struct {
+	mock *MockaccountDirectDeliverer
+}
+
+// NewMockaccountDirectDeliverer creates a new mock instance.
+func NewMockaccountDirectDeliverer(ctrl *gomock.Controller) *MockaccountDirectDeliverer {
+	mock := &MockaccountDirectDeliverer{ctrl: ctrl}
+	mock.recorder = &MockaccountDirectDelivererMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockaccountDirectDeliverer) EXPECT() *MockaccountDirectDelivererMockRecorder {
+	return m.recorder
+}
+
+// AccountDirectDelivery mocks base method.
+func (m *MockaccountDirectDeliverer) AccountDirectDelivery() ([]string, string, string, bool) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AccountDirectDelivery")
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(string)
+	ret2, _ := ret[2].(string)
+	ret3, _ := ret[3].(bool)
+	return ret0, ret1, ret2, ret3
+}
+
+// AccountDirectDelivery indicates an expected call of AccountDirectDelivery.
+func (mr *MockaccountDirectDelivererMockRecorder) AccountDirectDelivery() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AccountDirectDelivery", reflect.TypeOf((*MockaccountDirectDeliverer)(nil).AccountDirectDelivery))
+}
+
 // MockpooledClient is a mock of pooledClient interface.
 type MockpooledClient struct {
 	ctrl     *gomock.Controller

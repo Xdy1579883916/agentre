@@ -357,14 +357,24 @@ func TestGivenUnknownLogLevelWhenRunStartsThenUsageErrorIsReturned(t *testing.T)
 }
 
 // Given daemon 内仍有约十处 stdlib log.Printf(panic 恢复、shutdown 失败、重启清扫),
-// When 日志初始化完成,Then 它们也被重定向进同一个日志文件,而不是只写 stderr。
+// When 它们在 daemon 存活期间被打出来,Then 也被重定向进同一个日志文件,而不是只
+// 写 stderr。日志出现的时刻就取 daemon 装配那一刻:run 返回之后文件已经交还
+// (见 initLogging 的 Closer),那之后的 stdlib 日志本来就不该再落进来。
 func TestGivenRunWhenStdlibLogIsUsedThenItAlsoLandsInTheLogFile(t *testing.T) {
 	clearRunEnvironment(t)
 	dir := t.TempDir()
 
-	_, err := executeRunForOptions(t, dir)
-	require.NoError(t, err)
-	log.Printf("daemon rpc handler panic: %v", "smoke")
+	cmd := newRunCmdWithDeps(runDeps{
+		dataDir: func() (string, error) { return dir, nil },
+		newDaemon: func(daemon.Options) (runDaemon, error) {
+			log.Printf("daemon rpc handler panic: %v", "smoke")
+			return fakeRunDaemon{}, nil
+		},
+	})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(nil)
+	require.NoError(t, cmd.Execute())
 
 	data, err := os.ReadFile(filepath.Join(dir, "logs", "agentred.log")) //nolint:gosec // G304: dir is this test's t.TempDir, not untrusted input.
 	require.NoError(t, err)

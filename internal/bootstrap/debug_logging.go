@@ -29,7 +29,9 @@ func LogsDir() (string, error) {
 // 三个 core（编码、轮转与保留策略由 internal/pkg/logfile 统一持有，与 agentred 同源），
 // 这样运行时切 Debug 开关即可改变日志详尽度而无需重启。
 func rebuildLogger(level, logsDir string) error {
-	l, err := logfile.New(os.Stdout, logsDir, "agentre", level)
+	// 热重载换的是整份 logger，旧那份的落盘文件这里不接管：桌面端与 agentred 不同，
+	// 它没有「收尾」这一刻，两次重建又落在同一对文件名上，交还与否都不影响谁能写。
+	l, _, err := logfile.New(os.Stdout, logsDir, "agentre", level)
 	if err != nil {
 		return err
 	}

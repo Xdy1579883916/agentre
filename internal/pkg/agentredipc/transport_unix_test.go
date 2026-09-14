@@ -79,3 +79,39 @@ func TestGivenSocketTakenOverByASecondListenerWhenTheFirstOneClosesThenTheLiveSo
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"ok":true}`, string(body))
 }
+
+// 上一台 daemon 的收尾与新 daemon 的启动是**并发**的:ipc.go 里那个
+// `<-ctx.Done(); srv.Shutdown(...)` 的 goroutine 没人 join,它完全可能晚到新进程
+// 已经建好 socket 之后才被调度。
+//
+// 上面那条用例只覆盖顺序发生的接管。交错发生时,「先 stat 看看还是不是我造的、
+// 再删」这两个系统调用中间就是窗口:stat 看到的还是自己那一个,删下去的却已经是
+// 后继者刚 bind 上的那一个。命中之后有两种表现 —— 后继者的 Listen 直接以
+// ENOENT 失败(它建完还要 stat 一次),或者它的 socket 建成之后凭空消失,此后本机
+// IPC 全部失联而两个 daemon 都毫无察觉。
+//
+// 这条用例靠重复逼近那个窗口,是概率性的:修复前本机 3000 轮内必现。
+func TestGivenAStaleListenerClosingWhileTheNextOneStartsWhenTheyRaceThenTheLiveSocketSurvives(t *testing.T) {
+	const rounds = 3000
+	for round := range rounds {
+		dataDir, err := os.MkdirTemp("", "agentred-ipc-race-")
+		require.NoError(t, err)
+
+		stale, err := Listen(dataDir)
+		require.NoError(t, err)
+		closed := make(chan struct{})
+		go func() {
+			defer close(closed)
+			_ = stale.Close()
+		}()
+
+		current, err := Listen(dataDir)
+		require.NoErrorf(t, err, "第 %d 轮:上一台 daemon 的收尾把新 daemon 的启动搞挂了", round)
+		<-closed
+		assert.FileExistsf(t, UnixSocketPath(dataDir),
+			"第 %d 轮:活着的 socket 被上一台 daemon 的收尾删掉了", round)
+
+		_ = current.Close()
+		_ = os.RemoveAll(dataDir)
+	}
+}

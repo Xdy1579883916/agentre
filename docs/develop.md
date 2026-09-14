@@ -113,7 +113,7 @@ The PR description follows [`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_
 
 ## The CI Gate
 
-Merging requires the nine jobs in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml), which run on every PR and on pushes to `main` / `develop/*`:
+Merging requires the eight jobs in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml), which run on every PR and on pushes to `main` / `develop/*`:
 
 | Job | What it runs |
 | --- | --- |
@@ -122,12 +122,11 @@ Merging requires the nine jobs in [`.github/workflows/ci.yml`](../.github/workfl
 | `Frontend Lint` | `cd frontend && pnpm run lint` |
 | `Frontend Test` | wails binding generation + `pnpm run typecheck` + `pnpm run test` |
 | `Wire Proto` | `cd frontend/packages/agentre-wire && pnpm run proto:check` |
-| `Mocks` | `make mock` regenerates them, then `git diff --exit-code` requires the checked-in output to already match (CI installs `mockgen@v0.6.0`) |
 | `agentred Packaging` | POSIX installer contract test (`bash scripts/test-install.sh`) |
 | `agentred Windows Installer` | Windows IPC/service and PowerShell installer tests |
 | `E2E` | `xvfb-run -a make e2e` — the independent hermetic desktop app, three serial smoke boundaries, on Ubuntu |
 
-CI uses the same repository entry points documented for local runs, but pins tool/runtime versions independently. Local `make lint` uses the `golangci-lint` v2 binary on `PATH`; when reproducing a CI-only lint result, check `golangci-lint version` against CI's v2.12.2. Two known gaps are deliberate: the Go suite runs **without `-race`**, and there is no pre-commit hook.
+CI uses the same repository entry points documented for local runs, but pins tool/runtime versions independently. Local `make lint` uses the `golangci-lint` v2 binary on `PATH`; when reproducing a CI-only lint result, check `golangci-lint version` against CI's v2.12.2. Three known gaps are deliberate: the Go suite runs **without `-race`**, there is no pre-commit hook, and **mock drift is not gated** — `make mock` is a local step, and a stale checked-in mock surfaces as a red test on the machine that runs it, not as a CI job.
 
 ## Windows subprocesses
 

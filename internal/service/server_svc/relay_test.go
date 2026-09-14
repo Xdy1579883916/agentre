@@ -287,7 +287,12 @@ func TestDialDesktopRelay_GivenTargetDesktopAppIsNotRunning_ThenItDoesNotReuseAg
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, err := svc.DialDesktopRelay(ctx, "sha256:desktop", "sha256:caller")
-		So(errors.Is(err, server_svc.ErrDesktopAppNotRunning), ShouldBeTrue)
+		// 失败时要把真错误带出来:CI 上这条偶发红过(本机满载也复现不出),而
+		// ShouldBeTrue 只会说「Expected true / Actual false」—— 下一次再红,至少能
+		// 一眼看出它拿到的是通道错误、拨号超时,还是别的什么。
+		if !errors.Is(err, server_svc.ErrDesktopAppNotRunning) {
+			t.Fatalf("目标桌面端没在跑必须映射成 ErrDesktopAppNotRunning, 实际拿到 %v", err)
+		}
 		So(errors.Is(err, client.ErrRelayDaemonOffline), ShouldBeFalse)
 	})
 }

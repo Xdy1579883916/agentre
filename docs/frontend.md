@@ -79,6 +79,17 @@ When moving an existing `agentre-server` implementation here, use this order:
 5. Verify and commit `agentre-server` independently. The two repositories never form one
    atomic Git commit, so do not remove the consumer copy before step 3 is available.
 
+**Neither package may carry a `prepare` script.** The consumer resolves them as git-hosted
+tarballs (`github:agentre-hub/agentre#<sha>&path:/frontend/packages/…`), and pnpm prepares
+any such dependency by shelling out to `npm install` inside the fetched tarball — which
+puts the consumer's bundled npm and this package's entire devDependency graph on that
+host's install path. That is how `agentre-server` CI went red in September 2026: node 22's
+npm 10 crashed (`Cannot read properties of null (reading 'edgesOut')`) resolving a floating
+peer of `vitest`, with nothing in either repository having changed. The output was
+discarded anyway — `files` ships `src` / `styles` / `fixtures` and `exports` points at the
+TypeScript sources, so the consumer compiles source and never sees `dist`. Run
+`pnpm run build` explicitly when you want that type-check.
+
 Tests stay with the behavior they own: shared behavior is tested in this package; each
 host tests its adapter and integration boundary. A green package suite alone does not
 prove either host wired the ports or data contract correctly.

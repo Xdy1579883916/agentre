@@ -138,11 +138,32 @@ describe("agentre-ui package boundary", () => {
     expect(declaredIn).toEqual([]);
   });
 
-  // 这一条来自 65e8db67(「ship immutable build artifacts」),守的是另一件事:
-  // 消费方拿到的包里有构建产物。它与上面那条依赖守卫无关,单独一条才不会互相
-  // 遮住信号 —— 本轮把它从上面那条里拆出来时一字未改。
-  it("Given agentre-ui is consumed from a Git subdirectory, When the package is inspected, Then the built entry point is present", () => {
-    expect(existsSync(join(packageRoot, "dist/index.js"))).toBe(true);
+  /**
+   * 这一条替掉了 65e8db67 那句 `existsSync("dist/index.js")`。那句钉错了对象:
+   * 同一次提交把 files 从 dist 换成 src、把 exports 指向 ./src/*.ts,消费方拿到的
+   * 目录里从此没有 dist,也没有任何解析路径会走到它;工作区里那份 dist 只是某次
+   * build 的残留,有人跑过就恒绿,跟消费方拿到什么无关。
+   *
+   * 真正会伤到消费方的是 prepare:带 prepare 的 git 依赖会让 pnpm 在对方机器上
+   * fork 一个 `npm install` 去「准备」这个包,把对方的 npm 和本包整张
+   * devDependency 图拖上它的安装关键路径(2026-09 agentre-server 四个 job 全红,
+   * 见 docs/frontend.md)。所以这里钉两件事:被消费的入口真的发得出去,且没有
+   * prepare。
+   */
+  it("Given agentre-ui is consumed from a Git subdirectory, When the package is inspected, Then it ships its exported entry and no prepare script", () => {
+    const manifest = JSON.parse(
+      readFileSync(join(packageRoot, "package.json"), "utf8"),
+    ) as {
+      files: string[];
+      scripts: Record<string, string | undefined>;
+      exports: Record<string, { default: string }>;
+    };
+    const entry = manifest.exports["."].default;
+
+    expect(entry).toBe("./src/index.ts");
+    expect(existsSync(join(packageRoot, entry))).toBe(true);
+    expect(manifest.files).toContain("src");
+    expect(manifest.scripts.prepare).toBeUndefined();
   });
 
   it("Given the engine settings source, When shared-package imports are scanned, Then it is present and has no host-only dependency", () => {

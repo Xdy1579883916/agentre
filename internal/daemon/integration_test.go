@@ -1457,11 +1457,22 @@ func TestIntegration_SameDeviceConnClosingDoesNotSuspendRunningSession(t *testin
 	require.NoError(t, second.Close())
 	// 等 daemon 真的处理完这条连接的关闭(bindConn 的 Done 监视是异步的),否则用例会
 	// 在「删掉了正主」之前就放行事件,复现不出这个时序。
-	require.Eventually(t, func() bool {
+	// 自己轮询而不是 require.Eventually:失败时要报出**最后看到的条数**。
+	// Eventually 的消息参数在调用那一刻就求值了,带不出等待过程中的观测值,于是
+	// 它只会说「Condition never satisfied」——而这里 3 和 1 是两件完全不同的事:
+	// 3 是关闭清理还没跑完(慢),1 是清理把正主一起删了(正是本用例回归的缺陷)。
+	live := -1
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
 		rig.d.conns.mu.Lock()
-		defer rig.d.conns.mu.Unlock()
-		return len(rig.d.conns.live) == 2
-	}, 5*time.Second, 10*time.Millisecond, "daemon must drop the closed connection from its live table")
+		live = len(rig.d.conns.live)
+		rig.d.conns.mu.Unlock()
+		if live == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.Equalf(t, 2, live,
+		"daemon must drop the closed connection from its live table; 3 = 关闭清理没跑完, 1 = 连正在用的那条也被删了")
 
 	close(gate)
 

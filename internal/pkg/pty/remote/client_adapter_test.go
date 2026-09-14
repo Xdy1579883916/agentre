@@ -183,6 +183,12 @@ func TestClientAdapter_GivenWrappedConnectionCloseFailureWhenAbortedThenReportsF
 	require.NoError(t, a.Abort())
 }
 
+// deliverWait 是这个文件里「等一件本该立刻发生的事」的上限：一帧投递、一次关闭
+// 信号、一条 exit。它只防挂死，**不是性能断言** —— 所以取得比任何机器的正常耗时
+// 都大得多，而不是卡在正常耗时边上。原先散落的 1s 就卡在边上，CI 的双核 runner
+// 上会以「谁都没坏」的方式变红。
+const deliverWait = 10 * time.Second
+
 func TestClientAdapter_GivenWrappedConnectionWhenObservedThenExposesItsStableClosedSignal(t *testing.T) {
 	c := newStubDaemonClient()
 	a := remote.NewClientAdapter(c)
@@ -196,7 +202,7 @@ func TestClientAdapter_GivenWrappedConnectionWhenObservedThenExposesItsStableClo
 	require.NoError(t, a.Abort())
 	select {
 	case <-a.Closed():
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("adapter did not expose the wrapped connection close")
 	}
 }
@@ -214,13 +220,13 @@ func TestClientAdapter_GivenAtomicSubscriptionsWhenDataArrivesThenDemuxesByTermi
 	select {
 	case ev := <-subA.Data:
 		assert.Equal(t, []byte("alpha"), ev.Data)
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("no data for term-a")
 	}
 	select {
 	case ev := <-subB.Data:
 		assert.Equal(t, []byte("beta"), ev.Data)
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("no data for term-b")
 	}
 }
@@ -253,7 +259,7 @@ func TestClientAdapter_GivenFastStartupBurstBeforeConsumerStartsWhenExitArrivesT
 	select {
 	case err := <-producerDone:
 		require.NoError(t, err, "notification handlers must not wait for the consumer")
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("startup notification handlers blocked on an unread subscription")
 	}
 	select {
@@ -267,21 +273,21 @@ func TestClientAdapter_GivenFastStartupBurstBeforeConsumerStartsWhenExitArrivesT
 		case ev, ok := <-sub.Data:
 			require.Truef(t, ok, "data closed after %d of %d frames", i, frameCount)
 			require.Equal(t, []byte(fmt.Sprintf("frame-%03d", i)), ev.Data)
-		case <-time.After(time.Second):
+		case <-time.After(deliverWait):
 			t.Fatalf("timed out waiting for frame %d of %d", i, frameCount)
 		}
 	}
 	select {
 	case _, ok := <-sub.Data:
 		require.False(t, ok, "data channel must close after the accepted burst")
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("data channel did not close after the accepted burst")
 	}
 	select {
 	case ev, ok := <-sub.Exit:
 		require.True(t, ok, "exit channel closed without the daemon outcome")
 		require.Equal(t, "natural", ev.Reason)
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("exit did not follow the accepted burst")
 	}
 	_, ok := <-sub.Exit
@@ -298,30 +304,25 @@ func TestClientAdapter_GivenBlockedConsumerAndOverCapBurstWhenExitArrivesThenBou
 	t.Cleanup(func() { _ = a.Abort() })
 	sub := a.Subscribe("term-over-cap")
 
-	producerDone := make(chan error, 1)
-	go func() {
-		for i := 0; i < frameCount; i++ {
-			if err := c.dispatch("terminal.data", protocol.TerminalDataEvent{
-				TerminalID: "term-over-cap",
-				Data:       []byte(fmt.Sprintf("frame-%04d", i)),
-			}); err != nil {
-				producerDone <- err
-				return
-			}
-		}
-		producerDone <- c.dispatch("terminal.exit", protocol.TerminalExitEvent{
+	// 这些 dispatch 全在测试 goroutine 上跑，而且此刻没有任何人读这条订阅：
+	// 「通知处理器不等消费者」因此由构造本身断言 —— 跑到下一行就是通过。
+	//
+	// 原先是另起一个 goroutine 加一秒预算。那把「不阻塞」测成了「够快」：这一段
+	// 是 frameCount 次经过 stub 的编解码，本机空载就要 65ms，CI 的双核 runner 上
+	// 越过一秒就假红（谁都没坏）。真阻塞的那一天由 `go test -timeout` 兜底，它给
+	// 的是完整的 goroutine 栈，比「blocked on an unread subscription」这句话更
+	// 指得出现场。
+	for i := range frameCount {
+		require.NoError(t, c.dispatch("terminal.data", protocol.TerminalDataEvent{
 			TerminalID: "term-over-cap",
-			Code:       0,
-			Reason:     "natural",
-		})
-	}()
-
-	select {
-	case err := <-producerDone:
-		require.NoError(t, err, "over-cap notification handlers must not wait for the consumer")
-	case <-time.After(time.Second):
-		t.Fatal("over-cap notification handlers blocked on an unread subscription")
+			Data:       []byte(fmt.Sprintf("frame-%04d", i)),
+		}))
 	}
+	require.NoError(t, c.dispatch("terminal.exit", protocol.TerminalExitEvent{
+		TerminalID: "term-over-cap",
+		Code:       0,
+		Reason:     "natural",
+	}))
 
 	var events []protocol.TerminalDataEvent
 	for ev := range sub.Data {
@@ -356,7 +357,7 @@ func TestClientAdapter_GivenBlockedConsumerAndOverCapBurstWhenExitArrivesThenBou
 	case ev, ok := <-sub.Exit:
 		require.True(t, ok, "exit channel closed without the daemon outcome")
 		require.Equal(t, "natural", ev.Reason)
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("exit did not follow the bounded data queue")
 	}
 	_, ok := <-sub.Exit
@@ -374,7 +375,7 @@ func TestClientAdapter_GivenExitWhenDeliveredThenClosesTheSameGenerationPair(t *
 	select {
 	case ev := <-sub.Exit:
 		assert.Equal(t, "natural", ev.Reason)
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("no exit event")
 	}
 	_, ok := <-sub.Exit
@@ -401,7 +402,7 @@ func TestClientAdapter_GivenStaleUnsubscribeWhenANewGenerationExistsThenKeepsNew
 	select {
 	case ev := <-second.Data:
 		assert.Equal(t, []byte("current"), ev.Data)
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("stale unsubscribe removed the current generation")
 	}
 	_, ok := <-first.Data
@@ -422,7 +423,7 @@ func TestClientAdapter_GivenConnectionCloseWhenSubscriptionsExistThenClosesAllAn
 		select {
 		case _, ok := <-ch:
 			assert.False(t, ok, "exit channel should be closed on connection close")
-		case <-time.After(time.Second):
+		case <-time.After(deliverWait):
 			t.Fatal("exit channel not closed within 1s")
 		}
 	}
@@ -485,13 +486,13 @@ func TestClientAdapter_GivenUnreadSpoolWhenUnsubscribedThenCancelsWorkerAndDisca
 	select {
 	case ev, ok := <-sub.Data:
 		require.Falsef(t, ok, "unsubscribe leaked queued data: %+v", ev)
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("blocked delivery worker did not stop after unsubscribe")
 	}
 	select {
 	case ev, ok := <-sub.Exit:
 		require.Falsef(t, ok, "unsubscribe published an exit value: %+v", ev)
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("exit channel did not close after unsubscribe")
 	}
 }
@@ -513,7 +514,7 @@ func TestClientAdapter_GivenAcceptedBurstWhenConnectionClosesThenDrainsDataBefor
 	select {
 	case _, ok := <-probe.Exit:
 		require.False(t, ok, "connection-close probe published an exit value")
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("connection close was not observed")
 	}
 	select {
@@ -527,20 +528,20 @@ func TestClientAdapter_GivenAcceptedBurstWhenConnectionClosesThenDrainsDataBefor
 		case ev, ok := <-sub.Data:
 			require.Truef(t, ok, "data closed after %d of %d accepted frames", i, frameCount)
 			require.Equal(t, []byte(fmt.Sprintf("accepted-%03d", i)), ev.Data)
-		case <-time.After(time.Second):
+		case <-time.After(deliverWait):
 			t.Fatalf("timed out waiting for accepted frame %d of %d", i, frameCount)
 		}
 	}
 	select {
 	case _, ok := <-sub.Data:
 		require.False(t, ok, "data channel must close after draining accepted frames")
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("data channel did not close after connection-close drain")
 	}
 	select {
 	case ev, ok := <-sub.Exit:
 		require.Falsef(t, ok, "connection close published an exit value: %+v", ev)
-	case <-time.After(time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("exit channel did not close after connection-close drain")
 	}
 }
@@ -618,7 +619,7 @@ func TestClientAdapter_GivenDeliveryExitUnsubscribeAndWatchCloseRacesThenNeverUs
 	}()
 	select {
 	case <-consumerDone:
-	case <-time.After(3 * time.Second):
+	case <-time.After(deliverWait):
 		t.Fatal("subscription delivery workers did not all terminate")
 	}
 }
