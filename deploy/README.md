@@ -107,14 +107,11 @@ compose 里两侧用的是同一个 `${AGENTRED_WORKSPACE}` 变量，就是为�
 目标机用 `Dockerfile` 的 `prebuilt` 目标打镜像再 compose。三个 CLI 那几层由
 `RUNTIME_IMAGE` 与版本 arg 决定，不变就全部命中 layer cache，每次部署只重打最后一层。
 
-送文件和跑远端脚本走 Gitea 实例的动作镜像（`actions/scp-action` / `actions/ssh-action`，就是
-appleboy 那两个的镜像）：私钥以 secret 字符串交给动作，runner 上不落密钥文件、不写 `ssh_config`；
-上传的是 `bin/agentred.next`，远端脚本里再原子换名成 `bin/agentred`，免得覆盖正在跑的那个
-（`scp-action` 不给文件改名，所以名字在 runner 上就改好）。**主机校验靠动作的 `fingerprint`**，
-它只收一个 SHA256 指纹、不传就是完全不校验，所以部署前先 `ssh-keyscan` 目标机、按 Go 客户端
-（x/crypto）会协商的那把钉住（首连信任）：它的偏好顺序是
-`ecdsa-256 > ecdsa-384 > ecdsa-521 > rsa > ed25519`，ed25519 排**最后**，服务端按 RFC 取客户端
-列表里它有的第一个；钉错类型会以 `host key fingerprint mismatch` 收场，那看着像网络问题、其实不是。
+送文件和跑远端脚本直接使用 runner 自带的 OpenSSH，避免动作在运行时从 GitHub Release
+下载 `drone-scp` / `drone-ssh`。私钥只写入 `0600` 的临时文件，并由 shell trap 清理；上传的
+是 `bin/agentred.next`，远端脚本里再原子换名成 `bin/agentred`，免得覆盖正在跑的那个。
+dev 流水线不保存也不校验目标机 host key；严格环境应由管理员预置 `known_hosts`，不要在
+流水线里动态扫描后立即信任。
 
 部署目录在机器上，不在仓库里：
 
