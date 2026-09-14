@@ -1129,7 +1129,7 @@ func TestDaemon_GivenLoggedInAndUnavailableRelay_WhenRunning_ThenLANKeepsServing
 		select {
 		case runErr := <-errCh:
 			require.NoError(t, runErr)
-		case <-time.After(3 * time.Second):
+		case <-time.After(daemonStopWait):
 			t.Error("Run did not return after cancel")
 		}
 	})
@@ -1182,7 +1182,7 @@ func TestDaemon_BootShutdown(t *testing.T) {
 	select {
 	case err := <-errCh:
 		assert.NoError(t, err)
-	case <-time.After(3 * time.Second):
+	case <-time.After(daemonStopWait):
 		t.Fatal("Run did not return after cancel")
 	}
 }
@@ -1201,7 +1201,7 @@ func TestDaemon_TwoConnectionsKeepTerminalHandlersIsolated(t *testing.T) {
 		select {
 		case runErr := <-errCh:
 			assert.NoError(t, runErr)
-		case <-time.After(3 * time.Second):
+		case <-time.After(daemonStopWait):
 			t.Error("daemon did not stop within 3s")
 		}
 	}()
@@ -1522,11 +1522,7 @@ func TestDaemon_GivenLoggedInDaemon_WhenRunning_ThenItPollsNeitherRevocationsNor
 	go func() { errCh <- d.Run(ctx) }()
 	t.Cleanup(func() {
 		cancel()
-		select {
-		case <-errCh:
-		case <-time.After(3 * time.Second):
-			t.Error("daemon did not shut down within 3s")
-		}
+		awaitDaemonStopped(t, errCh)
 	})
 
 	require.Eventually(t, func() bool { return relayDials.Load() >= 1 }, 3*time.Second, 20*time.Millisecond,
@@ -2173,7 +2169,7 @@ func TestDaemon_ShutdownClosesRunningPiGenerationBeforeReturning(t *testing.T) {
 	select {
 	case runErr := <-errC:
 		assert.NoError(t, runErr)
-	case <-time.After(3 * time.Second):
+	case <-time.After(daemonStopWait):
 		t.Fatal("daemon Run did not wait boundedly for connection runtime cleanup")
 	}
 }
@@ -2195,11 +2191,7 @@ func startTaskDaemon(t *testing.T) (*Daemon, func()) {
 	}, 2*time.Second, 10*time.Millisecond)
 	return d, func() {
 		cancel()
-		select {
-		case <-errC:
-		case <-time.After(3 * time.Second):
-			t.Log("daemon did not shut down within 3s")
-		}
+		awaitDaemonStopped(t, errC)
 	}
 }
 
@@ -2404,7 +2396,7 @@ func startEngineDaemon(t *testing.T, opts Options) *Daemon {
 		select {
 		case err := <-runErr:
 			require.NoError(t, err)
-		case <-time.After(3 * time.Second):
+		case <-time.After(daemonStopWait):
 			t.Error("daemon did not stop")
 		}
 	})

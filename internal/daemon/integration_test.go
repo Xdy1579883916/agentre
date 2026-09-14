@@ -108,6 +108,30 @@ func (f *fakeBackendRunner) Abort(_ context.Context, sessionID int64, _ uint64) 
 	return agentruntime.AbortOutcome{}, nil
 }
 
+// daemonStopWait 是等一台测试 daemon 的 Run 真正返回的上限。
+//
+// 为什么不能是 3s:daemon 自己的连接清扫预算就是 3s(daemonConnectionCleanupTimeout),
+// 而 Run 要在 shutdown 跑完之后才返回 —— 等 3s 是**刚好等不到**,机器一忙就超时。
+// 这些收尾原先超时只写一行日志就继续,于是上一条用例的 daemon 活着进了下一条;
+// 它的 shutdown 还会去动 agentruntime 的全局单例(DefaultCLISessionPool.CloseAll 与
+// CloseAllSessionsEverywhere),把**下一条用例**的会话一并关掉。CI 上那些「每轮换一条
+// 用例红、本机怎么都复现不出」的失败就是这么来的:本机人为满载(8 个 CPU 占满)+
+// GOMAXPROCS=1,三轮里能撞到一次「3 秒没关掉」。
+//
+// 所以给足余量,并且等不到就判失败:悄悄继续等于把污染留给后面的用例,而那些用例
+// 报出来的错与它们自己无关。
+const daemonStopWait = 30 * time.Second
+
+// awaitDaemonStopped 挡到这台 daemon 的 Run 返回为止。
+func awaitDaemonStopped(t *testing.T, stopped <-chan error) {
+	t.Helper()
+	select {
+	case <-stopped:
+	case <-time.After(daemonStopWait):
+		t.Errorf("daemon 在 %s 内没有退出:它会活着进入后面的用例,那里的失败与它们自己无关", daemonStopWait)
+	}
+}
+
 // startTestDaemon spins a daemon on ephemeral port, returns it + cancel.
 func startTestDaemon(t *testing.T) (*Daemon, func()) {
 	t.Helper()
@@ -129,11 +153,7 @@ func startTestDaemon(t *testing.T) (*Daemon, func()) {
 	}, 2*time.Second, 10*time.Millisecond)
 	return d, func() {
 		cancel()
-		select {
-		case <-errCh:
-		case <-time.After(3 * time.Second):
-			t.Log("daemon did not shut down within 3s")
-		}
+		awaitDaemonStopped(t, errCh)
 	}
 }
 
@@ -459,11 +479,7 @@ func TestIntegration_TLSFlag_ServesGeneratedCertificateOverWSSOnly(t *testing.T)
 	go func() { errCh <- d.Run(ctx) }()
 	t.Cleanup(func() {
 		cancel()
-		select {
-		case <-errCh:
-		case <-time.After(3 * time.Second):
-			t.Log("daemon did not shut down within 3s")
-		}
+		awaitDaemonStopped(t, errCh)
 	})
 	require.Eventually(t, func() bool {
 		d.mu.RLock()
@@ -568,11 +584,7 @@ func TestIntegration_UnauthGuard(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 	defer func() {
 		cancel()
-		select {
-		case <-errCh:
-		case <-time.After(3 * time.Second):
-			t.Log("daemon did not shut down within 3s")
-		}
+		awaitDaemonStopped(t, errCh)
 	}()
 
 	d.mu.RLock()
@@ -806,11 +818,7 @@ func bootRigWithOptions(t *testing.T, opts Options) *pairedTestRig {
 	stop := func() {
 		stopOnce.Do(func() {
 			dCancel()
-			select {
-			case <-dErrCh:
-			case <-time.After(3 * time.Second):
-				t.Log("daemon did not shut down within 3s")
-			}
+			awaitDaemonStopped(t, dErrCh)
 		})
 	}
 	t.Cleanup(stop)
@@ -2106,11 +2114,7 @@ func TestIntegration_CLIResolvePath(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 	t.Cleanup(func() {
 		dCancel()
-		select {
-		case <-dErrCh:
-		case <-time.After(3 * time.Second):
-			t.Log("daemon did not shut down within 3s")
-		}
+		awaitDaemonStopped(t, dErrCh)
 	})
 
 	pairBody := readLocalPair(t, d)
@@ -2718,11 +2722,7 @@ func TestIntegration_AccountHandshake_GivenTheDaemonsOwnTokenIsRejected_WhenRefr
 	go func() { errCh <- d.Run(ctx) }()
 	t.Cleanup(func() {
 		cancel()
-		select {
-		case <-errCh:
-		case <-time.After(3 * time.Second):
-			t.Error("daemon did not shut down within 3s")
-		}
+		awaitDaemonStopped(t, errCh)
 	})
 	require.Eventually(t, func() bool {
 		d.mu.RLock()
@@ -2829,8 +2829,8 @@ func TestIntegration_RelayInitiatedChannelServesAccountRuntimeAndCleansUp(t *tes
 		select {
 		case runErr := <-errCh:
 			require.NoError(t, runErr)
-		case <-time.After(3 * time.Second):
-			t.Error("relay daemon did not shut down within 3s")
+		case <-time.After(daemonStopWait):
+			t.Errorf("relay daemon 在 %s 内没有退出", daemonStopWait)
 		}
 	})
 
