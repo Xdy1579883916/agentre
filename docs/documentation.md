@@ -1,27 +1,18 @@
 # Documentation Maintenance and Fact-Checking Guide
 
-> **Read this before adding, editing, reordering, or reviewing any contributor doc (`AGENTS.md`, `CLAUDE.md`, `docs/*`).** It has two jobs:
-> keep the doc set **orderly** (links resolve, the index is current, nothing is duplicated), and keep every assertion **true for the proposed commit tree** (or committed `HEAD` during a read-only audit).
+> Read this before changing or reviewing contributor docs (`AGENTS.md`, `CLAUDE.md`, `docs/*`). Keep links and ownership current, avoid duplication, and verify facts against the proposed commit tree (or `HEAD` for a read-only audit).
 
-## Why This Doc Exists
+## Core Rules
 
-Contributor docs describe a living code base, so two kinds of failure keep recurring:
-
-- **Stale facts** — a package gets renamed, a count changes, or a file moves, but the doc keeps the old value. Package inventories under `internal/pkg/` and `pkg/` have drifted before; enumerate them from the proposed commit tree instead of trusting an earlier list.
-- **Branch leakage** — work that only lives on some feature branch gets written into the docs as if it were already the state of `main`. Agentre runs many feature
-  branches in parallel over long periods; with unmerged code sitting in the working tree, it is all too easy to slip it into `main`'s docs. **Check which branch you are on before writing a fact down.**
-
-### Agentre's Handling Principle: Stale Means Fix or Delete, Don't Leave Deprecated Content
-
-**When you find a stale / invalid fact, fix it or delete it outright; do not leave the invalid content in the doc behind a "(deprecated)" or "the old version was…" note.**
-Keeping it around only makes readers unsure which line is current. The only exception is "planned, not yet landed" content — that either goes into the docs of its corresponding branch, or is **explicitly marked** as planned;
-it must never be written as if already released.
+- Verify names, paths, inventories, and counts against the proposed tree; do not trust an older list or the unstaged working tree.
+- Check the current branch. Describe unmerged work only in that branch's docs, or mark it explicitly as planned.
+- Fix or delete stale content. Do not retain it as "deprecated" history.
 
 ## Key Rule: If `git grep` Can't Find It, Don't Write It
 
-Stage the files intended for the commit, then set `VERIFY_TREE="$(git write-tree)"`. **If `git grep <pattern> "$VERIFY_TREE" -- <path>` cannot find a fact in that proposed tree, don't claim it in the docs.** Use `git grep` / `git ls-tree` / `git show` / `git cat-file` against `$VERIFY_TREE`; do not use bare `rg` / `ls`, which include unstaged files. For a read-only audit of an already committed branch, set `VERIFY_TREE=HEAD` instead.
+Stage the intended files, then set `VERIFY_TREE="$(git write-tree)"`. If `git grep <pattern> "$VERIFY_TREE" -- <path>` cannot find a fact, do not claim it. Query `$VERIFY_TREE` with `git grep`, `git ls-tree`, `git show`, or `git cat-file`; bare `rg` and `ls` include unstaged files. For a read-only audit, use `VERIFY_TREE=HEAD`.
 
-> Cross-repo reminder: the optional multi-repository workspace wraps `agentre/`, `agentre-server/`, and `agentre-hub/` as **three mutually independent Git repositories**. This guide only covers `agentre/`; verify each sibling from inside its own repository. The desktop module path is `github.com/agentre-hub/agentre`, the hub is `github.com/agentre-hub/agentre-hub`, and the server remains the independent module `github.com/agentre-hub/agentre-server`.
+This guide covers only `agentre/`. Verify sibling repositories from their own roots.
 
 ## Doc Set and Responsibilities (Don't Duplicate — Cross-Link)
 
@@ -49,7 +40,7 @@ Stage the files intended for the commit, then set `VERIFY_TREE="$(git write-tree
 **Agentre has no `docs/README.md` index file** — the docs index role is played by the **"Engineering conventions and task routing" section of `AGENTS.md`**.
 When you add / move / delete `docs/*`, keep that section and the "Doc Set and Responsibilities" table above in sync.
 
-When you move a fact, move it to **the doc that owns it** and cross-link — never copy the same fact into two places, or they will eventually drift.
+Move facts to their owning document and cross-link instead of copying them.
 
 ## Checklist 1 — Organization (Run Every Time You Change a Doc)
 
@@ -84,16 +75,11 @@ Verify **every** concrete assertion against the code. Common assertion types and
 | cago framework import path | `git grep "github.com/cago-frame/cago" "$VERIFY_TREE" -- go.mod` |
 | Signatures / constructors / switch branches | Open the file and compare parameter by parameter; don't guess |
 
-Four pitfalls hit over and over:
-
-- **Working tree ≠ proposed commit tree.** Bare `rg` / `ls` include unstaged files. Stage the intended commit, derive `$VERIFY_TREE` with `git write-tree`, and run Git-aware fact checks against that immutable tree.
-- **Don't mix up the repos.** `agentre/`, `agentre-server/`, and `agentre-hub/` are independent repos; verify each from inside that repository.
-- **Counts drift silently.** For every number the docs state, enumerate it live from the canonical list; don't trust prose, don't trust memory.
-- **Generated files are not a source of truth.** `frontend/wailsjs/` is Wails-generated and gitignored. MockGen output is tracked and lives under `internal/**/mock_*/`, `internal/**/mocks/`, or an occasional co-located `mock_*_test.go`, so builds and tests do not depend on a local generator run. Verify the owning interface / generator directive rather than treating generated output as handwritten design evidence (for the list, see "Generated / self-managed files" in [architecture.md](./architecture.md)).
+Generated files are not a source of truth. `frontend/wailsjs/` is generated and ignored; tracked MockGen output lives under `internal/**/mock_*/`, `internal/**/mocks/`, or occasional co-located `mock_*_test.go`. Verify the owning interface or generator directive; see [Generated / self-managed files](./architecture.md#generated--self-managed-files).
 
 ## One-Shot Verification
 
-The concrete-fact checks below read the **proposed staged tree**, so unstaged feature work cannot masquerade as part of the commit while atomic code+docs changes are verified together. Run from the `agentre/` repo root and compare the output with the docs line by line:
+The checks below read the staged tree. Run them from the `agentre/` repository root and compare the output with the docs:
 
 ```bash
 VERIFY_TREE="$(git write-tree)"
@@ -120,8 +106,7 @@ echo "== golangci nilerr exception =="; git grep -n "nolint:nilerr" "$VERIFY_TRE
 echo "== cago import =="; git grep -n "github.com/cago-frame/cago" "$VERIFY_TREE" -- go.mod
 ```
 
-Link integrity is different: it must inspect the **staged proposal**, so a new or renamed doc is checked before commit and an unstaged file cannot hide a missing staged target.
-Repository-internal sources and targets come from Git's index; out-of-repository relative targets are rejected so a local workspace cannot hide a link that breaks in a standalone clone:
+The link check also reads Git's index, catches new or renamed docs before commit, and rejects out-of-repository targets that would fail in a standalone clone:
 
 ```bash
 git ls-files --cached -- AGENTS.md CLAUDE.md CONTRIBUTING.md 'docs/*.md' 'docs/**/*.md' \
@@ -150,9 +135,4 @@ done
 
 ## What to Do When You Find an Inconsistency
 
-Change the **docs** to match the proposed staged tree — that resulting tree is the source of truth for the commit. Exception: if it is **the code itself that's wrong** (a real bug), follow
-[develop.md](./develop.md)'s Fix Discipline — write a failing regression test first, then fix the code, and explain it in the PR. Either way,
-**never** silently skip a check you didn't satisfy — call it out in the PR description / conversation so the reviewer can confirm.
-
-When fixing a stale fact, remember Agentre's handling principle: **fix it or delete it outright, don't leave a deprecated note.** And don't casually make unrelated drive-by
-changes (rename sweeps / formatter passes / import reordering) — those bury the real doc fix and break review.
+Change docs to match the staged tree. If the code is wrong, follow [Fix Discipline](./develop.md#fix-discipline-hard-constraint): reproduce it with a failing regression test before changing code. Report any unsatisfied check, and leave unrelated cleanup out of the change.

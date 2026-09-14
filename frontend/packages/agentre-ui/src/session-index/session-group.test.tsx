@@ -156,19 +156,16 @@ describe("SessionGroup session row context menu", () => {
 
     const row = screen.getByRole("button", { name: /idle-2/ });
 
-    // 改名：右键 → 菜单 → 点「改名」→ handler 收到 (sessionId, title)。
     await user.pointer({ keys: "[MouseRight]", target: row });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     expect(onRenameSession).toHaveBeenCalledWith(2, "idle-2");
 
-    // 新标签打开。
     await user.pointer({ keys: "[MouseRight]", target: row });
     fireEvent.click(
       await screen.findByRole("menuitem", { name: "Open in new tab" }),
     );
     expect(onOpenInNewTab).toHaveBeenCalledWith(2);
 
-    // 删除。
     await user.pointer({ keys: "[MouseRight]", target: row });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     expect(onDeleteSession).toHaveBeenCalledWith(2);

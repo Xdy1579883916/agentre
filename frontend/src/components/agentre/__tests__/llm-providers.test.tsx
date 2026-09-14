@@ -1066,7 +1066,6 @@ describe("LlmProvidersPanel", () => {
       await within(dialog).findByText(/Already exists/),
     ).toBeInTheDocument();
     expect(within(dialog).getByText(/deepseek-chat/)).toBeInTheDocument();
-    // 读取成功的状态 chip 落在弹窗头部
     expect(within(dialog).getByText("Loaded")).toBeInTheDocument();
 
     await user.click(

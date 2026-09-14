@@ -120,14 +120,12 @@ func TestRunServerFlagUsesEnvironmentFallback(t *testing.T) {
 func TestLLMAddRequiresUUIDKey(t *testing.T) {
 	root := newRootCmd()
 
-	// --key not provided → cobra required-flag error (not usageError, but still an error)
 	root.SetArgs([]string{"llm", "add", "--name=test", "--type=openai"})
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
 	err := root.Execute()
 	assert.Error(t, err, "missing --key should be an error")
 
-	// --key is not a valid UUID → usageError
 	root2 := newRootCmd()
 	root2.SetArgs([]string{"llm", "add", "--key=not-a-uuid", "--name=test", "--type=openai", "--api-key=x"})
 	root2.SetOut(&bytes.Buffer{})
@@ -141,7 +139,7 @@ func TestLLMAddRequiresUUIDKey(t *testing.T) {
 func TestLLMRemoveRequiresUUIDKey(t *testing.T) {
 	root := newRootCmd()
 
-	// old positional numeric arg is gone; --key with non-UUID → usageError
+	// Positional numeric IDs are no longer accepted.
 	root.SetArgs([]string{"llm", "remove", "--key=not-a-uuid"})
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
