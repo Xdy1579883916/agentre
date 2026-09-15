@@ -116,6 +116,31 @@ describe("Agentre brand artwork", () => {
     expect(alpha(512, 940)).toBeLessThan(128);
   });
 
+  it("Given a browser tab, when the console renders its favicon, then it uses the full-bleed tile whose plate geometry tracks the Windows export", () => {
+    const tile = source(
+      path.join(packageRoot, "src/engine/assets/images/logo-tile.svg"),
+    );
+    const windowsIconSource = source(
+      path.join(repositoryRoot, "build/windows/icon.svg"),
+    );
+
+    // 标签页 16px 下裸 mark 的 33/480 描边只剩 1px 且是浅蓝渐变，白底几乎看不见；
+    // 深底板反而把轮廓兜住。浏览器和 Windows 任务栏一样没有统一底板规范，所以这里
+    // 跟 icon.svg 一样满版，而不是 macOS 那份留 100px 投影边距的。
+    expect(tile).toMatch(/<rect x="64" y="64" width="896" height="896"/);
+    expect(windowsIconSource).toMatch(
+      /<rect x="64" y="64" width="896" height="896"/,
+    );
+
+    // Dock 投影只有 macOS 的 appicon 需要；标签页里它只会把 16px 的图糊掉一圈。
+    expect(tile).not.toMatch(/dockShadow/);
+
+    // 和 logo-mark.svg 的分工必须留得住：那份是透明底的裸笔画，这份是带底板的瓦片。
+    expect(
+      source(path.join(packageRoot, "src/engine/assets/images/logo-mark.svg")),
+    ).not.toMatch(/<rect\b/);
+  });
+
   it("Given the Windows taskbar, when icon.ico is re-exported, then it comes from its own full-bleed source rather than the padded macOS tile", () => {
     const windowsIconSource = source(
       path.join(repositoryRoot, "build/windows/icon.svg"),
