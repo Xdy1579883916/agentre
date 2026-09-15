@@ -76,10 +76,13 @@ ARG COMMIT_ID=unknown
 ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=${GOPROXY}
 WORKDIR /src
-# pkg/wire 是嵌在本仓库里的独立模块，go.mod 用本地 replace 指过去，
-# 所以它必须先于 go mod download 就位
+# pkg/wire 与 pkg/syncwire 是嵌在本仓库里的独立模块，go.mod 用本地 replace 指过去，
+# 所以它们必须先于 go mod download 就位。再嵌一个 module 就要在这里加一行 ——
+# 忘了加在本机毫无痕迹（go build 手里有整个工作区），只有镜像会断。
+# internal/guard/docker_local_replace_test.go 守着这份清单。
 COPY go.mod go.sum ./
 COPY pkg/wire ./pkg/wire
+COPY pkg/syncwire ./pkg/syncwire
 RUN go mod download
 COPY . .
 # 与 Makefile 同一组 ldflags 符号，容器内 agentred --version 才能对回具体 commit。
